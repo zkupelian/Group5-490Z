@@ -3,4 +3,13 @@ title: "VersionTim"
 output: html_document
 date: "2025-11-25"
 ---
-Hi This is my workspace
+
+```{r}
+ChHlthSurvey1 <- ChHlthSurvey %>%
+  select(c(DIABETES, DIABETES_CURR, PHYSACTIV, FOODSIT, FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, ACE1, K11Q61, K11Q62, SC_RACE_R, BIRTH_YR)) %>%
+  mutate(DIABETES_CASE = ifelse(DIABETES == 1 & DIABETES_CURR == 1, 1, 0)) %>%
+  mutate(FPL_MIN = 
+           pmin(FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, na.rm = TRUE)) %>%
+  mutate(POV = ifelse(FPL_MIN < 100 | ACE1 == c(4,3) & FOODSIT == c(4,3), 1, 0)) 
+```
+
