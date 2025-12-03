@@ -43,7 +43,7 @@ ChHlthSurveyD <- ChHlthSurvey %>%
   mutate(FPL_MIN = 
            pmin(FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, na.rm = TRUE)) %>%
   mutate(SES = ifelse(FPL_MIN < 100 | ACE1 == c(4,3) & FOODSIT == c(4,3), 1, 2)) %>%
-  mutate(AGE_OLDER = ifelse(SC_AGE_YEARS > 5), 1, 2) %>%
+  mutate(AGE_OLDER = ifelse(SC_AGE_YEARS > 5, 1, 2)) %>%
   drop_na(c(-DIABETES_CURR, -ACE1, -FOODSIT)) 
 
   
