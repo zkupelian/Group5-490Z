@@ -109,7 +109,7 @@ modify_spanning_header(c("stat_1", "stat_2") ~ "**Economic Hardship (1 = Yes)**"
 
 ```
 
-Creating bivariate model
+Creating univariate model
 ```{r}
 Model1 <- glm(DIABETES_CASE ~ SES, data = ChHlthSurveyD, 
               family = binomial(link = "logit"))
