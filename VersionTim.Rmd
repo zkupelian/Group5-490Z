@@ -5,11 +5,97 @@ date: "2025-11-25"
 ---
 
 ```{r}
-ChHlthSurvey1 <- ChHlthSurvey %>%
-  select(c(DIABETES, DIABETES_CURR, PHYSACTIV, FOODSIT, FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, ACE1, K11Q61, K11Q62, SC_RACE_R, BIRTH_YR)) %>%
-  mutate(DIABETES_CASE = ifelse(DIABETES == 1 & DIABETES_CURR == 1, 1, 0)) %>%
+#| label: packages
+#| code-summary: "Packages"
+
+# Ensures the package "pacman" is installed
+if (!require("pacman")) install.packages("pacman")
+
+#CAUTION: pacman will only load packages that are used within this script.  
+  # Review your program and load appropriate packages here.
+ pacman::p_load(
+    here,    
+    rio, 
+    Hmisc,
+    rms,
+    tidyverse, 
+    gtsummary, 
+    janitor, 
+    marginaleffects, 
+    modelsummary, 
+    broom,
+    knitr,
+    pROC,
+    lmtest,
+    labelled
+ )
+
+ 
+```
+
+
+```{r}
+ChHlthSurvey <- read_sas("nsch2023data.sas7bdat")
+
+ChHlthSurveyD <- ChHlthSurvey %>%
+  select(c(DIABETES, DIABETES_CURR, PHYSACTIV, FOODSIT, FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, ACE1, SC_RACE_R, , SC_SEX, SC_AGE_YEARS)) %>%
+  mutate(DIABETES_CASE = ifelse(DIABETES == 1 & DIABETES_CURR == 1, 1, 2)) %>%
   mutate(FPL_MIN = 
            pmin(FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, na.rm = TRUE)) %>%
-  mutate(POV = ifelse(FPL_MIN < 100 | ACE1 == c(4,3) & FOODSIT == c(4,3), 1, 0)) 
+  mutate(SES = ifelse(FPL_MIN < 100 | ACE1 == c(4,3) & FOODSIT == c(4,3), 1, 2)) %>%
+  drop_na(c(-DIABETES_CURR, -ACE1, -FOODSIT)) 
+
+  
+ChHlthSurveyD
+```
+
+
+```{r}
+
+tbl_summary(
+  ChHlthSurveyD,
+  include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
+  type = all_continuous() ~ "continuous2",
+  statistic = all_continuous() ~ c("{mean} ({sd})" , "{median} ({p25}-{p75})",
+                                   "{min}-{max}")
+) |>
+add_n() |> # add column with total number of non-missing observations
+modify_header(label = "**Variable**") |>
+modify_caption("**Patient Characteristics**")
+```
+
+```{r}
+tbl_summary(
+  ChHlthSurveyD,
+  include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
+  type = all_continuous() ~ "continuous2",
+  statistic = all_continuous() ~ c("{mean} ({sd})" , "{median} ({p25}-{p75})",
+                                   "{min}-{max}") ,
+  by = DIABETES_CASE, # split table by group
+) |>
+add_n() |> # add column with total number of non-missing observations
+add_p() |> # test for a difference between groups
+modify_header(label = "**Variable**") |>
+modify_caption("**Patient Characteristics by Diabetes**") |>
+bold_labels() |>
+modify_spanning_header(c("stat_1", "stat_2") ~ "**Diabetes Case (1 = YES)**")
+```
+
+```{r}
+tbl_summary(
+  ChHlthSurveyD,
+  include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
+  type = all_continuous() ~ "continuous2",
+  statistic = all_continuous() ~ c("{mean} ({sd})" , "{median} ({p25}-{p75})",
+                                   "{min}-{max}") ,
+  percent = "row",
+  by = SES, # split table by group
+) |>
+add_n() |> # add column with total number of non-missing observations
+add_p() |> # test for a difference between groups
+modify_header(label = "**Predictors**") |>
+modify_caption("**Predictors of Diabetes**") |>
+bold_labels() |>
+modify_spanning_header(c("stat_1", "stat_2") ~ "**Economic Hardship (1 = Yes)**")
 ```
 
