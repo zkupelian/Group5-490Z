@@ -1,7 +1,3 @@
-# ============================================================================
-# MILESTONE 2 ANALYSIS: Pediatric Type 2 Diabetes (FIXED VERSION)
-# Research Question: What factors contribute to type 2 diabetes in children?
-# ============================================================================
 
 # Load required packages
 library(tidyverse)
@@ -13,16 +9,8 @@ library(officer)
 # Set working directory (change this to your folder path)
 setwd("C:/Users/thora/downloads/health490z/team project")
 
-# ============================================================================
-# 1. LOAD AND PREPARE DATA
-# ============================================================================
-
 # Load CSV data
 df <- read_csv("nsch2023data.csv", show_col_types = FALSE)
-
-# ============================================================================
-# 2. CREATE ANALYSIS DATASET WITH INCLUSION/EXCLUSION CRITERIA
-# ============================================================================
 
 # Create working dataset with key variables
 analysis_df <- df %>%
@@ -146,19 +134,12 @@ analysis_complete <- analysis_df %>%
 analysis_sensitivity <- analysis_complete %>%
   filter(SC_AGE_YEARS >= 6)
 
-# ============================================================================
-# 3. UNIVARIATE ANALYSIS - Descriptive Statistics
-# ============================================================================
 
 summary(analysis_complete$SC_AGE_YEARS)
 print(table(analysis_complete$physactiv_cat, useNA = "ifany"))
 print(table(analysis_complete$sex, useNA = "ifany"))
 print(table(analysis_complete$race_collapsed, useNA = "ifany"))
 print(table(analysis_complete$diabetes_status, useNA = "ifany"))
-
-# ============================================================================
-# 4. TABLE 1 - DESCRIPTIVE CHARACTERISTICS BY DIABETES STATUS (BIVARIATE)
-# ============================================================================
 
 # Create Table 1 using gtsummary
 table1 <- analysis_complete %>%
@@ -200,9 +181,6 @@ table1 %>%
   as_flex_table() %>%
   save_as_docx(path = "Table1_Descriptive_Characteristics_FIXED.docx")
 
-# ============================================================================
-# 5. BIVARIATE ANALYSIS - Physical Activity Associations
-# ============================================================================
 
 # Cross-tabulation with TOTALS
 phys_table <- table(analysis_complete$physactiv_cat, analysis_complete$diabetes_status)
@@ -254,9 +232,6 @@ forest_data$N_display <- sprintf("%d/%d", forest_data$Cases, forest_data$Total)
 
 print(forest_data)
 
-# ============================================================================
-# CREATE FIGURE 2: Horizontal Forest Plot (Publication Quality)
-# ============================================================================
 
 # Prepare data (reverse order for top-to-bottom display)
 forest_horizontal <- forest_data %>%
@@ -306,9 +281,6 @@ ggsave("Figure2_Physical_Activity_Forest_Plot.png", figure2, width = 10, height 
 
 print(figure2)
 
-# ============================================================================
-# 6. BIVARIATE ANALYSIS - Economic Status Associations
-# ============================================================================
 
 # Test each economic indicator separately
 print(table(analysis_complete$food_insecure, analysis_complete$diabetes_status))
@@ -365,9 +337,6 @@ table3 %>%
   as_flex_table() %>%
   save_as_docx(path = "Table3_Economic_Status_Association_FIXED.docx")
 
-# ============================================================================
-# CREATE FIGURE 3: Heatmap of Joint Effects (PA × Economic Status)
-# ============================================================================
 
 # Create joint PA × Economic Status data
 heatmap_data <- analysis_complete %>%
@@ -453,9 +422,6 @@ model_joint <- glm(diabetes ~ PA_level + high_econ_hardship + PA_level:high_econ
 print(summary(model_joint))
 print(exp(coef(model_joint)))
 
-# ============================================================================
-# 7. STRATIFIED ANALYSIS - By Age Group (FIXED WITH N COUNTS)
-# ============================================================================
 
 # First show the crosstabs for each age group
 for(age in c("6-11 years", "12-17 years")) {
@@ -514,10 +480,6 @@ model_interaction <- glm(diabetes ~ physactiv_binary * age_group,
                           filter(age_group %in% c("6-11 years", "12-17 years")),
                         family = binomial)
 print(summary(model_interaction))
-
-# ============================================================================
-# 8. SENSITIVITY ANALYSES (EXPANDED - 6 DIFFERENT SPECIFICATIONS)
-# ============================================================================
 
 # Primary analysis
 sens_primary <- glm(diabetes ~ physactiv_binary,
@@ -660,9 +622,6 @@ table5_ft <- flextable(table5_display) %>%
 
 save_as_docx(table5_ft, path = "Table5_Sensitivity_Analyses_FIXED.docx")
 
-# ============================================================================
-# 9. EXPORT ANALYSIS DATASET FOR FURTHER WORK
-# ============================================================================
 
 # Save cleaned dataset
 write_csv(analysis_complete, "analysis_dataset_complete.csv")
