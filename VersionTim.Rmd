@@ -3,7 +3,7 @@ title: "VersionTim"
 output: html_document
 date: "2025-11-25"
 ---
-
+Download relevant
 ```{r}
 #| label: packages
 #| code-summary: "Packages"
@@ -33,24 +33,28 @@ if (!require("pacman")) install.packages("pacman")
  
 ```
 
-
+Cleaning data
 ```{r}
 ChHlthSurvey <- read_sas("nsch2023data.sas7bdat")
 
 ChHlthSurveyD <- ChHlthSurvey %>%
-  select(c(DIABETES, DIABETES_CURR, PHYSACTIV, FOODSIT, FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, ACE1, SC_RACE_R, , SC_SEX, SC_AGE_YEARS)) %>%
-  mutate(DIABETES_CASE = ifelse(DIABETES == 1 & DIABETES_CURR == 1, 1, 2)) %>%
+  select(c(DIABETES, DIABETES_CURR, PHYSACTIV, FOODSIT, FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, ACE1, SC_RACE_R, SC_SEX, SC_AGE_YEARS)) %>%
+  mutate(DIABETES_CASE = ifelse(DIABETES == 1 & DIABETES_CURR == 1, 1, 0)) %>%
   mutate(FPL_MIN = 
            pmin(FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, na.rm = TRUE)) %>%
-  mutate(SES = ifelse(FPL_MIN < 100 | ACE1 == c(4,3) & FOODSIT == c(4,3), 1, 2)) %>%
+  mutate(SES = ifelse(FPL_MIN < 100 | ACE1 == c(4,3) & FOODSIT == c(4,3), 1, 0)) %>%
   mutate(AGE_OLDER = ifelse(SC_AGE_YEARS > 5, 1, 2)) %>%
+  mutate(
+  SC_RACE_R = factor(SC_RACE_R, levels = c(1,2,3,4,5,7), 
+                     labels = c("White", "Black", "AIAN", "Asian", "NHPI","TwoOrMore")),
+  DIABETES_CASE = factor(DIABETES_CASE, levels = c(0,1), labels = c("No", "Yes")),
+  SES = factor(SES, levels = c(0,1), labels = c("Not_Low", "Low")),
+  SC_SEX = factor(SC_SEX, levels = c(1,2), labels = c("Male", "Female"))) %>%
   drop_na(c(-DIABETES_CURR, -ACE1, -FOODSIT)) 
 
-  
+
 ChHlthSurveyD
 ```
-
-
 ```{r}
 
 tbl_summary(
@@ -63,9 +67,11 @@ tbl_summary(
 add_n() |> # add column with total number of non-missing observations
 modify_header(label = "**Variable**") |>
 modify_caption("**Patient Characteristics**")
+    
 ```
 
 ```{r}
+#table2
 tbl_summary(
   ChHlthSurveyD,
   include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
@@ -83,6 +89,7 @@ modify_spanning_header(c("stat_1", "stat_2") ~ "**Diabetes Case (1 = YES)**")
 ```
 
 ```{r}
+#table3
 tbl_summary(
   ChHlthSurveyD,
   include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
@@ -98,5 +105,42 @@ modify_header(label = "**Predictors**") |>
 modify_caption("**Predictors of Diabetes**") |>
 bold_labels() |>
 modify_spanning_header(c("stat_1", "stat_2") ~ "**Economic Hardship (1 = Yes)**")
+
+
 ```
+
+Creating bivariate model
+```{r}
+Model1 <- glm(DIABETES_CASE ~ SES, data = ChHlthSurveyD, 
+              family = binomial(link = "logit"))
+summary(Model1)
+
+```
+Calculating the odds ratio with CI
+```{r}
+tidy(Model1, conf.int = TRUE, exponentiate = TRUE)
+```
+
+Create multivariate model
+```{r}
+
+Model2 <- glm(DIABETES_CASE ~ SES + PHYSACTIV + SC_RACE_R + SC_AGE_YEARS, 
+              data = ChHlthSurveyD, family = binomial(link = "logit"))
+summary(Model2)
+
+```
+
+
+Finding the most parsimonious model using backward AIC selection
+```{r}
+backwardmod <- step(Model2, direction = "backward")
+```
+
+Updated parsimonious model
+```{r}
+Model2b <- glm(DIABETES_CASE ~ SES + SC_RACE_R + SC_AGE_YEARS, 
+              data = ChHlthSurveyD, family = binomial(link = "logit"))
+summary(Model2b)
+```
+
 
