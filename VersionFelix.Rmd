@@ -1,1 +1,669 @@
+# ============================================================================
+# MILESTONE 2 ANALYSIS: Pediatric Type 2 Diabetes (FIXED VERSION)
+# Research Question: What factors contribute to type 2 diabetes in children?
+# ============================================================================
 
+# Load required packages
+library(tidyverse)
+library(haven)
+library(gtsummary)
+library(flextable)
+library(officer)
+
+# Set working directory (change this to your folder path)
+setwd("C:/Users/thora/downloads/health490z/team project")
+
+# ============================================================================
+# 1. LOAD AND PREPARE DATA
+# ============================================================================
+
+# Load CSV data
+df <- read_csv("nsch2023data.csv", show_col_types = FALSE)
+
+# ============================================================================
+# 2. CREATE ANALYSIS DATASET WITH INCLUSION/EXCLUSION CRITERIA
+# ============================================================================
+
+# Create working dataset with key variables
+analysis_df <- df %>%
+  select(
+    # Outcome
+    DIABETES,
+    # Primary exposure
+    PHYSACTIV,
+    # Economic exposures
+    FOODSIT, FPL_I1, FPL_I6, ACE1, K11Q61, K11Q62,
+    # Covariates
+    SC_AGE_YEARS, SC_SEX, SC_RACE_R, BIRTH_YR
+  ) %>%
+  mutate(
+    # Recode diabetes outcome (1=Yes, 2=No -> 1=Yes, 0=No)
+    diabetes = case_when(
+      DIABETES == 1 ~ 1,
+      DIABETES == 2 ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    # Create diabetes status label
+    diabetes_status = case_when(
+      diabetes == 1 ~ "Diabetes",
+      diabetes == 0 ~ "No Diabetes",
+      TRUE ~ NA_character_
+    ),
+
+    # Recode physical activity
+    physactiv_cat = case_when(
+      PHYSACTIV == 1 ~ "0 days/week",
+      PHYSACTIV == 2 ~ "1-3 days/week",
+      PHYSACTIV == 3 ~ "4-6 days/week",
+      PHYSACTIV == 4 ~ "7 days/week",
+      TRUE ~ NA_character_
+    ),
+
+    # Create dichotomous physical activity (for sensitivity analysis)
+    physactiv_binary = case_when(
+      PHYSACTIV >= 3 ~ "High (4-7 days)",
+      PHYSACTIV <= 2 ~ "Low (0-3 days)",
+      TRUE ~ NA_character_
+    ),
+
+    # Age groups
+    age_group = case_when(
+      SC_AGE_YEARS >= 0 & SC_AGE_YEARS <= 5 ~ "0-5 years",
+      SC_AGE_YEARS >= 6 & SC_AGE_YEARS <= 11 ~ "6-11 years",
+      SC_AGE_YEARS >= 12 & SC_AGE_YEARS <= 17 ~ "12-17 years",
+      TRUE ~ NA_character_
+    ),
+
+    # Sex
+    sex = case_when(
+      SC_SEX == 1 ~ "Male",
+      SC_SEX == 2 ~ "Female",
+      TRUE ~ NA_character_
+    ),
+
+    # Race/Ethnicity (may need to collapse some categories)
+    race = case_when(
+      SC_RACE_R == 1 ~ "White, non-Hispanic",
+      SC_RACE_R == 2 ~ "Black, non-Hispanic",
+      SC_RACE_R == 3 ~ "AI/AN, non-Hispanic",
+      SC_RACE_R == 4 ~ "Asian, non-Hispanic",
+      SC_RACE_R == 5 ~ "NH/PI, non-Hispanic",
+      SC_RACE_R == 7 ~ "Multiracial, non-Hispanic",
+      TRUE ~ NA_character_
+    ),
+
+    # Collapsed race (for analyses with small cell sizes)
+    race_collapsed = case_when(
+      SC_RACE_R == 1 ~ "White, non-Hispanic",
+      SC_RACE_R == 2 ~ "Black, non-Hispanic",
+      SC_RACE_R == 4 ~ "Asian, non-Hispanic",
+      SC_RACE_R %in% c(3, 5, 7) ~ "Other/Multiracial",
+      TRUE ~ NA_character_
+    ),
+
+    # Food security (binary)
+    food_insecure = case_when(
+      FOODSIT == 1 ~ "Never insecure",
+      FOODSIT >= 2 ~ "Somewhat/Often insecure",
+      TRUE ~ NA_character_
+    ),
+
+    # Economic hardship (ACE1)
+    econ_hardship = case_when(
+      ACE1 %in% c(1, 2) ~ "Never/Rarely",
+      ACE1 %in% c(3, 4) ~ "Somewhat/Very often",
+      TRUE ~ NA_character_
+    ),
+
+    # Federal poverty level categories
+    fpl_category = case_when(
+      FPL_I6 < 100 ~ "<100% FPL",
+      FPL_I6 >= 100 & FPL_I6 < 200 ~ "100-199% FPL",
+      FPL_I6 >= 200 & FPL_I6 < 400 ~ "200-399% FPL",
+      FPL_I6 >= 400 ~ ">=400% FPL",
+      TRUE ~ NA_character_
+    ),
+
+    # Composite economic hardship (high if any indicator suggests hardship)
+    high_econ_hardship = case_when(
+      FOODSIT >= 2 | ACE1 >= 3 | K11Q61 == 1 ~ "High hardship",
+      TRUE ~ "Low hardship"
+    )
+  )
+
+# Apply inclusion/exclusion criteria
+analysis_complete <- analysis_df %>%
+  filter(
+    !is.na(diabetes),           # Complete diabetes data
+    !is.na(PHYSACTIV),          # Complete physical activity data
+    !is.na(SC_AGE_YEARS),       # Complete age data
+    !is.na(SC_SEX),             # Complete sex data
+    !is.na(SC_RACE_R)           # Complete race data
+  )
+
+# Create sensitivity dataset (ages 6-17 only, excluding 0-5)
+analysis_sensitivity <- analysis_complete %>%
+  filter(SC_AGE_YEARS >= 6)
+
+# ============================================================================
+# 3. UNIVARIATE ANALYSIS - Descriptive Statistics
+# ============================================================================
+
+summary(analysis_complete$SC_AGE_YEARS)
+print(table(analysis_complete$physactiv_cat, useNA = "ifany"))
+print(table(analysis_complete$sex, useNA = "ifany"))
+print(table(analysis_complete$race_collapsed, useNA = "ifany"))
+print(table(analysis_complete$diabetes_status, useNA = "ifany"))
+
+# ============================================================================
+# 4. TABLE 1 - DESCRIPTIVE CHARACTERISTICS BY DIABETES STATUS (BIVARIATE)
+# ============================================================================
+
+# Create Table 1 using gtsummary
+table1 <- analysis_complete %>%
+  select(diabetes_status, SC_AGE_YEARS, age_group, sex, race_collapsed,
+         physactiv_cat, food_insecure, econ_hardship, fpl_category) %>%
+  tbl_summary(
+    by = diabetes_status,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = all_continuous() ~ 2,
+    label = list(
+      SC_AGE_YEARS ~ "Age, years",
+      age_group ~ "Age Group",
+      sex ~ "Sex",
+      race_collapsed ~ "Race/Ethnicity",
+      physactiv_cat ~ "Physical Activity",
+      food_insecure ~ "Food Security",
+      econ_hardship ~ "Economic Hardship (ACE1)",
+      fpl_category ~ "Household Income (% FPL)"
+    ),
+    missing = "no"
+  ) %>%
+  add_overall() %>%
+  add_p(
+    test = all_continuous() ~ "t.test",
+    test.args = all_tests("fisher.test") ~ list(simulate.p.value = TRUE)
+  ) %>%
+  add_n() %>%
+  modify_header(label ~ "**Characteristic**") %>%
+  modify_caption("**Table 1. Descriptive Characteristics by Type 2 Diabetes Status**") %>%
+  bold_labels()
+
+print(table1)
+
+# Save as Word document
+table1 %>%
+  as_flex_table() %>%
+  save_as_docx(path = "Table1_Descriptive_Characteristics_FIXED.docx")
+
+# ============================================================================
+# 5. BIVARIATE ANALYSIS - Physical Activity Associations
+# ============================================================================
+
+# Cross-tabulation with TOTALS
+phys_table <- table(analysis_complete$physactiv_cat, analysis_complete$diabetes_status)
+print(phys_table)
+print(colSums(phys_table))
+print(rowSums(phys_table))
+
+# Chi-square test
+chisq_physactiv <- chisq.test(table(analysis_complete$physactiv_cat,
+                                    analysis_complete$diabetes_status))
+
+# Logistic regression for odds ratios (unadjusted)
+# Using 7 days/week as reference
+analysis_complete$physactiv_cat <- factor(analysis_complete$physactiv_cat,
+                                          levels = c("7 days/week", "4-6 days/week",
+                                                    "1-3 days/week", "0 days/week"))
+
+# Run logistic regression model
+model_physactiv <- glm(diabetes ~ physactiv_cat,
+                       data = analysis_complete,
+                       family = binomial)
+
+# Extract results for forest plot
+coefs <- coef(model_physactiv)
+conf_int <- confint(model_physactiv)
+
+# Create data frame for forest plot
+forest_data <- data.frame(
+  Category = c("7 days/week", "4-6 days/week", "1-3 days/week", "0 days/week"),
+  OR = c(1.00, exp(coefs[2]), exp(coefs[3]), exp(coefs[4])),
+  Lower = c(NA, exp(conf_int[2,1]), exp(conf_int[3,1]), exp(conf_int[4,1])),
+  Upper = c(NA, exp(conf_int[2,2]), exp(conf_int[3,2]), exp(conf_int[4,2])),
+  Cases = c(
+    sum(analysis_complete$physactiv_cat == "7 days/week" & analysis_complete$diabetes == 1),
+    sum(analysis_complete$physactiv_cat == "4-6 days/week" & analysis_complete$diabetes == 1),
+    sum(analysis_complete$physactiv_cat == "1-3 days/week" & analysis_complete$diabetes == 1),
+    sum(analysis_complete$physactiv_cat == "0 days/week" & analysis_complete$diabetes == 1)
+  ),
+  Total = c(
+    sum(analysis_complete$physactiv_cat == "7 days/week"),
+    sum(analysis_complete$physactiv_cat == "4-6 days/week"),
+    sum(analysis_complete$physactiv_cat == "1-3 days/week"),
+    sum(analysis_complete$physactiv_cat == "0 days/week")
+  )
+)
+
+# Format for display
+forest_data$N_display <- sprintf("%d/%d", forest_data$Cases, forest_data$Total)
+
+print(forest_data)
+
+# ============================================================================
+# CREATE FIGURE 2: Horizontal Forest Plot (Publication Quality)
+# ============================================================================
+
+# Prepare data (reverse order for top-to-bottom display)
+forest_horizontal <- forest_data %>%
+  mutate(
+    Category_order = 4:1,
+    Category_label = factor(Category, levels = rev(Category))
+  )
+
+figure2 <- ggplot(forest_horizontal, aes(x = OR, y = Category_label)) +
+  # Reference line at OR = 1
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red", linewidth = 0.8) +
+  # Error bars (CI)
+  geom_errorbarh(aes(xmin = Lower, xmax = Upper),
+                 height = 0.2, linewidth = 1, color = "darkblue") +
+  # Point estimates
+  geom_point(size = 4, shape = 18, color = "darkblue") +
+  # Add text labels
+  geom_text(aes(x = 0.1, label = N_display),
+            size = 3.5, hjust = 1, fontface = "bold") +
+  geom_text(aes(x = max(Upper, na.rm = TRUE) * 1.1,
+                label = ifelse(Category == "7 days/week",
+                              "1.00 (Ref)",
+                              sprintf("%.2f (%.2f, %.2f)", OR, Lower, Upper))),
+            size = 3.5, hjust = 0) +
+  labs(
+    title = "Figure 2. Association Between Physical Activity and Type 2 Diabetes",
+    subtitle = "Odds Ratios and 95% Confidence Intervals",
+    x = "Odds Ratio (log scale)",
+    y = "Physical Activity Level",
+    caption = "Reference group: 7 days/week of physical activity.\nNumbers on left show cases/total. Dashed line indicates OR = 1.0 (no association)."
+  ) +
+  scale_x_log10(
+    breaks = c(0.1, 0.5, 1, 2, 5, 10),
+    labels = c("0.1", "0.5", "1.0", "2.0", "5.0", "10.0")
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle = element_text(hjust = 0.5, size = 11, color = "gray40"),
+    plot.caption = element_text(hjust = 0, size = 9, color = "gray40"),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 11, face = "bold")
+  ) +
+  coord_cartesian(xlim = c(0.1, max(forest_horizontal$Upper, na.rm = TRUE) * 1.5))
+
+ggsave("Figure2_Physical_Activity_Forest_Plot.png", figure2, width = 10, height = 6, dpi = 300)
+
+print(figure2)
+
+# ============================================================================
+# 6. BIVARIATE ANALYSIS - Economic Status Associations
+# ============================================================================
+
+# Test each economic indicator separately
+print(table(analysis_complete$food_insecure, analysis_complete$diabetes_status))
+print(table(analysis_complete$econ_hardship, analysis_complete$diabetes_status))
+print(table(analysis_complete$fpl_category, analysis_complete$diabetes_status))
+
+# Create Table 3 - Multiple economic indicators
+analysis_complete$fpl_category <- factor(analysis_complete$fpl_category,
+                                         levels = c(">=400% FPL", "200-399% FPL",
+                                                   "100-199% FPL", "<100% FPL"))
+
+table3_food <- analysis_complete %>%
+  select(diabetes, food_insecure) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(food_insecure ~ "Food Insecurity")
+  ) %>%
+  add_n(location = "level")
+
+table3_hardship <- analysis_complete %>%
+  select(diabetes, econ_hardship) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(econ_hardship ~ "Economic Hardship (ACE1)")
+  ) %>%
+  add_n(location = "level")
+
+table3_fpl <- analysis_complete %>%
+  select(diabetes, fpl_category) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(fpl_category ~ "Household Income (% FPL)")
+  ) %>%
+  add_n(location = "level")
+
+# Combine into single table
+table3 <- tbl_stack(list(table3_food, table3_hardship, table3_fpl)) %>%
+  modify_caption("**Table 3. Association Between Economic Status and Type 2 Diabetes**") %>%
+  bold_labels()
+
+print(table3)
+
+# Save Table 3
+table3 %>%
+  as_flex_table() %>%
+  save_as_docx(path = "Table3_Economic_Status_Association_FIXED.docx")
+
+# ============================================================================
+# CREATE FIGURE 3: Heatmap of Joint Effects (PA × Economic Status)
+# ============================================================================
+
+# Create joint PA × Economic Status data
+heatmap_data <- analysis_complete %>%
+  mutate(
+    # Simplify PA to 3 levels for cleaner visualization
+    PA_level = case_when(
+      PHYSACTIV == 4 ~ "High\n(7 days)",
+      PHYSACTIV == 3 ~ "Medium\n(4-6 days)",
+      PHYSACTIV %in% c(1, 2) ~ "Low\n(0-3 days)",
+      TRUE ~ NA_character_
+    ),
+    PA_level = factor(PA_level, levels = c("High\n(7 days)", "Medium\n(4-6 days)", "Low\n(0-3 days)"))
+  ) %>%
+  filter(!is.na(PA_level), !is.na(high_econ_hardship))
+
+# Calculate prevalence and counts for each combination
+heatmap_summary <- heatmap_data %>%
+  group_by(PA_level, high_econ_hardship) %>%
+  summarise(
+    n_total = n(),
+    n_diabetes = sum(diabetes == 1, na.rm = TRUE),
+    prevalence = (n_diabetes / n_total) * 100,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label_text = sprintf("%.2f%%\n(n=%d/%d)", prevalence, n_diabetes, n_total)
+  )
+
+print(heatmap_summary)
+
+# Create the heatmap
+figure3 <- ggplot(heatmap_summary, aes(x = PA_level, y = high_econ_hardship, fill = prevalence)) +
+  geom_tile(color = "white", linewidth = 1.5) +
+  geom_text(aes(label = label_text), size = 4.5, fontface = "bold", color = "white") +
+  scale_fill_gradient2(
+    low = "#2166ac",
+    mid = "#f7f7f7",
+    high = "#b2182b",
+    midpoint = median(heatmap_summary$prevalence),
+    name = "Diabetes\nPrevalence (%)",
+    limits = c(0, max(heatmap_summary$prevalence) * 1.1)
+  ) +
+  labs(
+    title = "Figure 3. Joint Effects of Physical Activity and Economic Hardship\non Pediatric Type 2 Diabetes",
+    subtitle = "Diabetes prevalence (%) by physical activity level and economic status",
+    x = "Physical Activity Level",
+    y = "Economic Hardship Status",
+    caption = "Cell values show diabetes prevalence (%) and case counts (n=diabetes cases/total).\nColors range from blue (low prevalence) to red (high prevalence)."
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14, margin = margin(b = 5)),
+    plot.subtitle = element_text(hjust = 0.5, size = 11, color = "gray40", margin = margin(b = 15)),
+    plot.caption = element_text(hjust = 0.5, size = 9, color = "gray40", margin = margin(t = 10)),
+    axis.text.x = element_text(size = 11, face = "bold"),
+    axis.text.y = element_text(size = 11, face = "bold"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    panel.grid = element_blank(),
+    legend.position = "right"
+  ) +
+  coord_fixed(ratio = 1)
+
+ggsave("Figure3_Joint_Effects_Heatmap.png", figure3, width = 10, height = 7, dpi = 300)
+
+print(figure3)
+
+# Test for interaction between PA and economic status
+model_interaction_econ <- glm(diabetes ~ PA_level * high_econ_hardship,
+                              data = heatmap_data,
+                              family = binomial)
+print(summary(model_interaction_econ))
+
+# Calculate ORs for each combination (reference: High PA + Low hardship)
+heatmap_data$PA_level <- relevel(factor(heatmap_data$PA_level), ref = "High\n(7 days)")
+heatmap_data$high_econ_hardship <- relevel(factor(heatmap_data$high_econ_hardship), ref = "Low hardship")
+
+model_joint <- glm(diabetes ~ PA_level + high_econ_hardship + PA_level:high_econ_hardship,
+                  data = heatmap_data,
+                  family = binomial)
+
+print(summary(model_joint))
+print(exp(coef(model_joint)))
+
+# ============================================================================
+# 7. STRATIFIED ANALYSIS - By Age Group (FIXED WITH N COUNTS)
+# ============================================================================
+
+# First show the crosstabs for each age group
+for(age in c("6-11 years", "12-17 years")) {
+  age_data <- analysis_sensitivity %>%
+    filter(age_group == age)
+
+  crosstab <- table(age_data$physactiv_binary, age_data$diabetes_status)
+  print(crosstab)
+}
+
+# Stratify by age group (exclude 0-5 per sensitivity analysis)
+# Create separate tables to show N clearly
+table4_6to11 <- analysis_sensitivity %>%
+  filter(age_group == "6-11 years") %>%
+  select(diabetes, physactiv_binary) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(physactiv_binary ~ "Physical Activity")
+  ) %>%
+  add_n(location = "level") %>%
+  modify_header(label = "**6-11 years**")
+
+table4_12to17 <- analysis_sensitivity %>%
+  filter(age_group == "12-17 years") %>%
+  select(diabetes, physactiv_binary) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(physactiv_binary ~ "Physical Activity")
+  ) %>%
+  add_n(location = "level") %>%
+  modify_header(label = "**12-17 years**")
+
+# Merge side by side
+table4 <- tbl_merge(
+  tbls = list(table4_12to17, table4_6to11),
+  tab_spanner = c("**12-17 years**", "**6-11 years**")
+) %>%
+  modify_caption("**Table 4. Association Between Physical Activity and Diabetes, Stratified by Age**")
+
+print(table4)
+
+# Save Table 4
+table4 %>%
+  as_flex_table() %>%
+  save_as_docx(path = "Table4_Stratified_Age_FIXED.docx")
+
+# Test for interaction
+model_interaction <- glm(diabetes ~ physactiv_binary * age_group,
+                        data = analysis_sensitivity %>%
+                          filter(age_group %in% c("6-11 years", "12-17 years")),
+                        family = binomial)
+print(summary(model_interaction))
+
+# ============================================================================
+# 8. SENSITIVITY ANALYSES (EXPANDED - 6 DIFFERENT SPECIFICATIONS)
+# ============================================================================
+
+# Primary analysis
+sens_primary <- glm(diabetes ~ physactiv_binary,
+                   data = analysis_complete,
+                   family = binomial)
+
+# Sensitivity 1: Males only
+analysis_male <- analysis_complete %>% filter(sex == "Male")
+sens1 <- glm(diabetes ~ physactiv_binary,
+            data = analysis_male,
+            family = binomial)
+
+# Sensitivity 2: Females only
+analysis_female <- analysis_complete %>% filter(sex == "Female")
+sens2 <- glm(diabetes ~ physactiv_binary,
+            data = analysis_female,
+            family = binomial)
+
+# Sensitivity 3: White children only
+analysis_white <- analysis_complete %>% filter(race_collapsed == "White, non-Hispanic")
+sens3 <- glm(diabetes ~ physactiv_binary,
+            data = analysis_white,
+            family = binomial)
+
+# Sensitivity 4: Non-White children
+analysis_nonwhite <- analysis_complete %>% filter(race_collapsed != "White, non-Hispanic")
+sens4 <- glm(diabetes ~ physactiv_binary,
+            data = analysis_nonwhite,
+            family = binomial)
+
+# Sensitivity 5: Different PA cutoff (>=5 days vs <5 days)
+analysis_complete_pa5 <- analysis_complete %>%
+  mutate(physactiv_5days = case_when(
+    PHYSACTIV == 4 ~ "High (7 days)",
+    PHYSACTIV >= 2 ~ "Medium (1-6 days)",
+    PHYSACTIV == 1 ~ "Low (0 days)",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(physactiv_5days))
+
+analysis_complete_pa5$physactiv_5days <- factor(analysis_complete_pa5$physactiv_5days,
+                                                levels = c("High (7 days)", "Medium (1-6 days)", "Low (0 days)"))
+
+sens5 <- glm(diabetes ~ physactiv_5days,
+            data = analysis_complete_pa5,
+            family = binomial)
+
+# Sensitivity 6: Different FPL categorizations (binary: <200% vs >=200%)
+analysis_complete_fpl <- analysis_complete %>%
+  mutate(fpl_binary = case_when(
+    FPL_I6 < 200 ~ "Low income (<200% FPL)",
+    FPL_I6 >= 200 ~ "Higher income (>=200% FPL)",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(fpl_binary))
+
+sens6 <- glm(diabetes ~ fpl_binary,
+            data = analysis_complete_fpl,
+            family = binomial)
+
+# Create Table 5 - Sensitivity Analyses (EXPANDED)
+sens_results <- data.frame(
+  Analysis = c(
+    "Primary: All children, dichotomized PA",
+    "Sensitivity 1: Males only",
+    "Sensitivity 2: Females only",
+    "Sensitivity 3: White children only",
+    "Sensitivity 4: Non-White children",
+    "Sensitivity 5: PA 3-level (Low vs High)",
+    "Sensitivity 6: FPL binary (<200% vs >=200%)"
+  ),
+  N_Cases = c(
+    sum(analysis_complete$diabetes == 1),
+    sum(analysis_male$diabetes == 1),
+    sum(analysis_female$diabetes == 1),
+    sum(analysis_white$diabetes == 1),
+    sum(analysis_nonwhite$diabetes == 1),
+    sum(analysis_complete_pa5$diabetes == 1),
+    sum(analysis_complete_fpl$diabetes == 1)
+  ),
+  N_Controls = c(
+    sum(analysis_complete$diabetes == 0),
+    sum(analysis_male$diabetes == 0),
+    sum(analysis_female$diabetes == 0),
+    sum(analysis_white$diabetes == 0),
+    sum(analysis_nonwhite$diabetes == 0),
+    sum(analysis_complete_pa5$diabetes == 0),
+    sum(analysis_complete_fpl$diabetes == 0)
+  ),
+  OR = c(
+    round(exp(coef(sens_primary)[2]), 2),
+    round(exp(coef(sens1)[2]), 2),
+    round(exp(coef(sens2)[2]), 2),
+    round(exp(coef(sens3)[2]), 2),
+    round(exp(coef(sens4)[2]), 2),
+    round(exp(coef(sens5)[3]), 2),  # Low vs High for 3-level
+    round(exp(coef(sens6)[2]), 2)
+  ),
+  CI_lower = c(
+    round(exp(confint(sens_primary)[2,1]), 2),
+    round(exp(confint(sens1)[2,1]), 2),
+    round(exp(confint(sens2)[2,1]), 2),
+    round(exp(confint(sens3)[2,1]), 2),
+    round(exp(confint(sens4)[2,1]), 2),
+    round(exp(confint(sens5)[3,1]), 2),
+    round(exp(confint(sens6)[2,1]), 2)
+  ),
+  CI_upper = c(
+    round(exp(confint(sens_primary)[2,2]), 2),
+    round(exp(confint(sens1)[2,2]), 2),
+    round(exp(confint(sens2)[2,2]), 2),
+    round(exp(confint(sens3)[2,2]), 2),
+    round(exp(confint(sens4)[2,2]), 2),
+    round(exp(confint(sens5)[3,2]), 2),
+    round(exp(confint(sens6)[2,2]), 2)
+  )
+)
+
+sens_results$Cases_Total <- paste0(sens_results$N_Cases, "/",
+                                   sens_results$N_Cases + sens_results$N_Controls)
+sens_results$OR_CI <- paste0(sens_results$OR, " (",
+                             sens_results$CI_lower, ", ",
+                             sens_results$CI_upper, ")")
+
+table5_display <- sens_results %>%
+  select(Analysis, Cases_Total, OR_CI)
+
+print(table5_display)
+
+# Save as flextable
+table5_ft <- flextable(table5_display) %>%
+  set_header_labels(
+    Analysis = "Analysis Specification",
+    Cases_Total = "N Cases/Total",
+    OR_CI = "OR (95% CI)"
+  ) %>%
+  theme_booktabs() %>%
+  autofit() %>%
+  add_header_lines("Table 5. Sensitivity Analyses")
+
+save_as_docx(table5_ft, path = "Table5_Sensitivity_Analyses_FIXED.docx")
+
+# ============================================================================
+# 9. EXPORT ANALYSIS DATASET FOR FURTHER WORK
+# ============================================================================
+
+# Save cleaned dataset
+write_csv(analysis_complete, "analysis_dataset_complete.csv")
+write_csv(analysis_sensitivity, "analysis_dataset_sensitivity_ages6-17.csv")
