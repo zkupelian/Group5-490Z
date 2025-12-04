@@ -27,7 +27,8 @@ if (!require("pacman")) install.packages("pacman")
     knitr,
     pROC,
     lmtest,
-    labelled
+    labelled,
+    broom.helpers
  )
 
  
@@ -37,67 +38,186 @@ Cleaning data
 ```{r}
 ChHlthSurvey <- read_sas("nsch2023data.sas7bdat")
 
-ChHlthSurveyD <- ChHlthSurvey %>%
-  select(c(DIABETES, DIABETES_CURR, PHYSACTIV, FOODSIT, FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, ACE1, SC_RACE_R, SC_SEX, SC_AGE_YEARS)) %>%
-  mutate(DIABETES_CASE = ifelse(DIABETES == 1 & DIABETES_CURR == 1, 1, 0)) %>%
-  mutate(FPL_MIN = 
-           pmin(FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, na.rm = TRUE)) %>%
-  mutate(SES = ifelse(FPL_MIN < 100 | ACE1 == c(4,3) & FOODSIT == c(4,3), 1, 0)) %>%
-  mutate(AGE_OLDER = ifelse(SC_AGE_YEARS > 5, 1, 2)) %>%
+analysis_df <- ChHlthSurvey %>%
+  select(
+    # Outcome
+    DIABETES,DIABETES_CURR,
+    # Economic exposures
+    FOODSIT, FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, ACE1,
+    # Covariates
+    SC_AGE_YEARS, SC_SEX, SC_RACE_R, PHYSACTIV,
+    ) %>%
   mutate(
-  SC_RACE_R = factor(SC_RACE_R, levels = c(1,2,3,4,5,7), 
-                     labels = c("White", "Black", "AIAN", "Asian", "NHPI","TwoOrMore")),
-  DIABETES_CASE = factor(DIABETES_CASE, levels = c(0,1), labels = c("No", "Yes")),
-  SES = factor(SES, levels = c(0,1), labels = c("Not_Low", "Low")),
-  SC_SEX = factor(SC_SEX, levels = c(1,2), labels = c("Male", "Female"))) %>%
-  drop_na(c(-DIABETES_CURR, -ACE1, -FOODSIT)) 
+    DIABETES_C = ifelse(
+      DIABETES == 1 & DIABETES_CURR == 1, 1, 0)
+    ) %>%
 
+    # Create diabetes status label
+  mutate(
+    diabetes_status = factor(
+      DIABETES_C, 
+      levels = c(0,1), 
+      labels = c("No Diabetes", "Diabetes")),
 
-ChHlthSurveyD
+    # Recode physical activity
+    physactiv_cat = case_when(
+      PHYSACTIV == 1 ~ "0 days/week",
+      PHYSACTIV == 2 ~ "1-3 days/week",
+      PHYSACTIV == 3 ~ "4-6 days/week",
+      PHYSACTIV == 4 ~ "7 days/week",
+      TRUE ~ NA_character_
+    ),
+
+    # Create dichotomous physical activity (for sensitivity analysis)
+    high_econ_hardship = case_when(
+      PHYSACTIV >= 3 ~ "High (4-7 days)",
+      PHYSACTIV <= 2 ~ "Low (0-3 days)",
+      TRUE ~ NA_character_
+    ),
+
+    # Age groups
+    age_group = case_when(
+      SC_AGE_YEARS >= 0 & SC_AGE_YEARS <= 5 ~ 0,
+      SC_AGE_YEARS >= 6 & SC_AGE_YEARS <= 11 ~ 1,
+      SC_AGE_YEARS >= 12 & SC_AGE_YEARS <= 17 ~ 2,
+      TRUE ~ NA_real_
+    ),
+    age_group = factor(age_group, 
+                        levels = c(0, 1, 2),
+                        labels = c("0-5 years", "6-11 years", "12-17 years")
+    ),
+
+    # Sex
+    sex = case_when(
+      SC_SEX == 1 ~ "Male",
+      SC_SEX == 2 ~ "Female",
+      TRUE ~ NA_character_
+    ),
+
+    # Race/Ethnicity (may need to collapse some categories)
+    race = case_when(
+      SC_RACE_R == 1 ~ "White, non-Hispanic",
+      SC_RACE_R == 2 ~ "Black, non-Hispanic",
+      SC_RACE_R == 3 ~ "AI/AN, non-Hispanic",
+      SC_RACE_R == 4 ~ "Asian, non-Hispanic",
+      SC_RACE_R == 5 ~ "NH/PI, non-Hispanic",
+      SC_RACE_R == 7 ~ "Multiracial, non-Hispanic",
+      TRUE ~ NA_character_
+    ),
+
+    # Collapsed race (for analyses with small cell sizes)
+    race_collapsed = case_when(
+      SC_RACE_R == 1 ~ 1,
+      SC_RACE_R == 2 ~ 2,
+      SC_RACE_R == 4 ~ 4,
+      SC_RACE_R %in% c(3, 5, 7) ~ 5,
+      TRUE ~ NA_real_
+    ),
+
+    # Food security (binary)
+    food_insecure = case_when(
+      FOODSIT == 1 ~ "Never insecure",
+      FOODSIT >= 2 ~ "Somewhat/Often insecure",
+      TRUE ~ NA_character_
+    ),
+
+    # Economic hardship (ACE1)
+    econ_hardship = case_when(
+      ACE1 %in% c(1, 2) ~ "Never/Rarely",
+      ACE1 %in% c(3, 4) ~ "Somewhat/Very often",
+      TRUE ~ NA_character_
+    ),
+
+    # Federal poverty level categories
+    fpl_category = case_when(
+      FPL_I6 < 100 ~ "<100% FPL",
+      FPL_I6 >= 100 & FPL_I6 < 200 ~ "100-199% FPL",
+      FPL_I6 >= 200 & FPL_I6 < 400 ~ "200-399% FPL",
+      FPL_I6 >= 400 ~ ">=400% FPL",
+      TRUE ~ NA_character_
+    ),
+    FPL_MIN = 
+      pmin(FPL_I1, FPL_I2, FPL_I3, FPL_I4, FPL_I5, FPL_I6, na.rm = TRUE),
+  ) %>%
+    # Composite economic hardship (high if any indicator suggests hardship)
+    mutate(
+      high_econ_hardship = case_when(
+        FOODSIT >= 2 | ACE1 >= 3 | FPL_MIN == "<100% FPL" ~ 1,
+        TRUE ~ 0
+        ), 
+      high_econ_hardship = factor(high_econ_hardship,
+                                levels = c(0, 1), 
+                                labels = c("Low hardship", "High hardship")),
+      race_collapsed = factor(race_collapsed,
+                              levels = c(1, 2, 4, 5),
+                              labels = c("White, non-Hispanic", "Black, non-Hispanic",
+                                         "Asian, non-Hispanic", "Other/Multiracial")
+                    )
+)
+
+# Apply inclusion/exclusion criteria
+analysis_df <- analysis_df %>%
+  filter(
+    !is.na(diabetes_status),           
+    !is.na(PHYSACTIV),          
+    !is.na(SC_AGE_YEARS),       
+    !is.na(SC_SEX),             
+    !is.na(SC_RACE_R)          
+  )
+
+analysis_df
 ```
+
+
 ```{r}
 
-tbl_summary(
-  ChHlthSurveyD,
-  include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
+table1 <- tbl_summary(
+  analysis_df,
+  include = c(diabetes_status, high_econ_hardship, race, physactiv_cat, sex, age_group),
   type = all_continuous() ~ "continuous2",
   statistic = all_continuous() ~ c("{mean} ({sd})" , "{median} ({p25}-{p75})",
                                    "{min}-{max}")
 ) |>
 add_n() |> # add column with total number of non-missing observations
 modify_header(label = "**Variable**") |>
-modify_caption("**Patient Characteristics**")
+modify_caption("**Person Characteristics**")
+
+as_flex_table(table1)
+
     
 ```
 
 ```{r}
-#table2
-tbl_summary(
-  ChHlthSurveyD,
-  include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
+
+table2 <- tbl_summary(
+  analysis_df,
+  include = c(high_econ_hardship, race, physactiv_cat, sex, age_group),
   type = all_continuous() ~ "continuous2",
   statistic = all_continuous() ~ c("{mean} ({sd})" , "{median} ({p25}-{p75})",
                                    "{min}-{max}") ,
-  by = DIABETES_CASE, # split table by group
+  by = diabetes_status, # split table by group
 ) |>
 add_n() |> # add column with total number of non-missing observations
 add_p() |> # test for a difference between groups
 modify_header(label = "**Variable**") |>
-modify_caption("**Patient Characteristics by Diabetes**") |>
+modify_caption("**Person Characteristics by Diabetes**") |>
 bold_labels() |>
-modify_spanning_header(c("stat_1", "stat_2") ~ "**Diabetes Case (1 = YES)**")
+modify_spanning_header(c("stat_1", "stat_2") ~ "**Diabetes Cases**")
+
+as_flex_table(table2)
+
 ```
 
 ```{r}
-#table3
-tbl_summary(
-  ChHlthSurveyD,
-  include = c(DIABETES_CASE, PHYSACTIV, FOODSIT, FPL_MIN, ACE1, SC_RACE_R, SC_AGE_YEARS, SC_SEX, SES),
+
+table3 <- tbl_summary(
+  analysis_df,
+  include = c(diabetes_status, race, physactiv_cat, sex, age_group),
   type = all_continuous() ~ "continuous2",
   statistic = all_continuous() ~ c("{mean} ({sd})" , "{median} ({p25}-{p75})",
                                    "{min}-{max}") ,
   percent = "row",
-  by = SES, # split table by group
+  by = high_econ_hardship, # split table by group
 ) |>
 add_n() |> # add column with total number of non-missing observations
 add_p() |> # test for a difference between groups
@@ -106,12 +226,13 @@ modify_caption("**Predictors of Diabetes**") |>
 bold_labels() |>
 modify_spanning_header(c("stat_1", "stat_2") ~ "**Economic Hardship (1 = Yes)**")
 
-
+as_flex_table(table3)
 ```
 
 Creating univariate model
 ```{r}
-Model1 <- glm(DIABETES_CASE ~ SES, data = ChHlthSurveyD, 
+
+Model1 <- glm(diabetes_status ~ high_econ_hardship, data = analysis_df, 
               family = binomial(link = "logit"))
 summary(Model1)
 
@@ -119,28 +240,272 @@ summary(Model1)
 Calculating the odds ratio with CI
 ```{r}
 tidy(Model1, conf.int = TRUE, exponentiate = TRUE)
+
+table4 <- analysis_df %>%
+  select(diabetes_status, high_econ_hardship) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes_status,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(high_econ_hardship ~ "Economic Hardship")
+  ) %>%
+  add_n(location = "level")
+
+tbl_stack(list(table4)) %>%
+  modify_caption("**Table 3. Association Between Economic Status and Type 2 Diabetes**") %>%
+  bold_labels()
 ```
+
+```{r}
+analysis_df %>%
+  tabyl(high_econ_hardship, diabetes_status) %>%
+  adorn_totals(where = c("row", "col")) %>%
+  adorn_percentages("row") %>%
+  adorn_pct_formatting(digits = 1) %>%
+  adorn_ns("front") %>%
+  knitr::kable() %>%
+  kable_styling(full_width = FALSE) %>%
+  row_spec(0, background = "white") %>%  # header row
+  row_spec(1:2, background = "white")  # all body rows
+```
+
+
 
 Create multivariate model
 ```{r}
 
-Model2 <- glm(DIABETES_CASE ~ SES + PHYSACTIV + SC_RACE_R + SC_AGE_YEARS, 
-              data = ChHlthSurveyD, family = binomial(link = "logit"))
+Model2 <- glm(diabetes_status ~ high_econ_hardship+race_collapsed+physactiv_cat+age_group, 
+              data = analysis_df, family = binomial(link = "logit"))
 summary(Model2)
 
 ```
+```{r}
+ChHlthSurvey %>%
+  filter(SC_AGE_YEARS <= 6) %>%
+  select(c(SC_AGE_YEARS,PHYSACTIV))
+```
 
+
+Wald Test
+```{r}
+wt_race <- waldtest(Model2, "race_collapsed", test = "Chisq")
+wt_phys <- waldtest(Model2, "physactiv_cat", test = "Chisq")
+wt_age  <- waldtest(Model2, "age_group", test = "Chisq")
+wt_econ <- waldtest(Model2, "high_econ_hardship", test = "Chisq")
+
+# Helper function to extract results
+extract_wald <- function(wt_obj, varname) {
+  data.frame(
+    Variable = varname,
+    Chisq = wt_obj$Chisq[2],       # second row has the test
+    Df = wt_obj$Df[2],
+    p_value = wt_obj$`Pr(>Chisq)`[2]
+  )
+}
+
+# Combine results
+wald_table <- bind_rows(
+  extract_wald(wt_race, "Race"),
+  extract_wald(wt_phys, "Physical Activity"),
+  extract_wald(wt_age, "Age Group"),
+  extract_wald(wt_econ, "Economic Hardship")
+)
+
+# Format p-values nicely
+wald_table <- wald_table %>%
+  mutate(p_value = signif(p_value, 3))
+
+wald_table
+
+wt_race
+
+```
+
+
+```{r}
+
+table5 <- analysis_df %>%
+  select(diabetes_status, race_collapsed) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes_status,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(race_collapsed ~ "Race")
+  ) %>%
+  add_n(location = "level")
+
+table6 <- analysis_df %>%
+  select(diabetes_status, physactiv_cat) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes_status,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(physactiv_cat ~ "Physical Activity")
+  ) %>%
+  add_n(location = "level")
+
+table7 <- analysis_df %>%
+  select(diabetes_status, age_group) %>%
+  tbl_uvregression(
+    method = glm,
+    y = diabetes_status,
+    method.args = list(family = binomial),
+    exponentiate = TRUE,
+    label = list(age_group ~ "Age Group")
+  ) %>%
+  add_n(location = "level")
+
+tbl_stack(list(table5, table6, table7)) %>%
+  modify_caption("**Table 5. Association Between Covariates and Type 2 Diabetes**") %>%
+  bold_labels()
+```
 
 Finding the most parsimonious model using backward AIC selection
 ```{r}
 backwardmod <- step(Model2, direction = "backward")
 ```
 
-Updated parsimonious model
+Sensitivity Analysis
 ```{r}
-Model2b <- glm(DIABETES_CASE ~ SES + SC_RACE_R + SC_AGE_YEARS, 
-              data = ChHlthSurveyD, family = binomial(link = "logit"))
-summary(Model2b)
+# Primary analysis
+sens_primary <- glm(diabetes_status ~ high_econ_hardship,
+                   data = analysis_df,
+                   family = binomial)
+
+# Sensitivity 1: Males only
+analysis_male <- analysis_df %>% filter(sex == "Male")
+sens1 <- glm(diabetes_status ~ high_econ_hardship,
+            data = analysis_male,
+            family = binomial)
+
+# Sensitivity 2: Females only
+analysis_female <- analysis_df %>% filter(sex == "Female")
+sens2 <- glm(diabetes_status ~ high_econ_hardship,
+            data = analysis_female,
+            family = binomial)
+
+# Sensitivity 3: White children only
+analysis_white <- analysis_df %>% filter(race_collapsed == "White, non-Hispanic")
+sens3 <- glm(diabetes_status ~ high_econ_hardship,
+            data = analysis_white,
+            family = binomial)
+
+# Sensitivity 4: Non-White children
+analysis_nonwhite <- analysis_df %>% filter(race_collapsed != "White, non-Hispanic")
+sens4 <- glm(diabetes_status ~ high_econ_hardship,
+            data = analysis_nonwhite,
+            family = binomial)
+
+# Sensitivity 5: Different PA cutoff (>=5 days vs <5 days)
+analysis_df_pa5 <- analysis_df %>%
+  mutate(physactiv_5days = case_when(
+    PHYSACTIV == 4 ~ "High (7 days)",
+    PHYSACTIV >= 2 ~ "Medium (1-6 days)",
+    PHYSACTIV == 1 ~ "Low (0 days)",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(physactiv_5days))
+
+analysis_df_pa5$physactiv_5days <- factor(analysis_df_pa5$physactiv_5days,
+                                                levels = c("High (7 days)", "Medium (1-6 days)", "Low (0 days)"))
+
+sens5 <- glm(diabetes_status ~ physactiv_5days,
+            data = analysis_df_pa5,
+            family = binomial)
+
+# Sensitivity 6: Different FPL categorizations (binary: <200% vs >=200%)
+analysis_df_fpl <- analysis_df %>%
+  mutate(fpl_binary = case_when(
+    FPL_I6 < 200 ~ "Low income (<200% FPL)",
+    FPL_I6 >= 200 ~ "Higher income (>=200% FPL)",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(fpl_binary))
+
+sens6 <- glm(diabetes_status ~ fpl_binary,
+            data = analysis_df_fpl,
+            family = binomial)
+
+# Create Table 5 - Sensitivity Analyses (EXPANDED)
+sens_results <- data.frame(
+  Analysis = c(
+    "Primary: All children, dichotomized PA",
+    "Sensitivity 1: Males only",
+    "Sensitivity 2: Females only",
+    "Sensitivity 3: White children only",
+    "Sensitivity 4: Non-White children",
+    "Sensitivity 5: PA 3-level (Low vs High)",
+    "Sensitivity 6: FPL binary (<200% vs >=200%)"
+  ),
+  N_Cases = c(
+    sum(analysis_df$diabetes_status == "Diabetes"),
+    sum(analysis_male$diabetes_status == "Diabetes"),
+    sum(analysis_female$diabetes_status == "Diabetes"),
+    sum(analysis_white$diabetes_status == "Diabetes"),
+    sum(analysis_nonwhite$diabetes_status == "Diabetes"),
+    sum(analysis_df_pa5$diabetes_status == "Diabetes"),
+    sum(analysis_df_fpl$diabetes_status == "Diabetes")
+  ),
+  N_Controls = c(
+    sum(analysis_df$diabetes_status == "No Diabetes"),
+    sum(analysis_male$diabetes_status == "No Diabetes"),
+    sum(analysis_female$diabetes_status == "No Diabetes"),
+    sum(analysis_white$diabetes_status == "No Diabetes"),
+    sum(analysis_nonwhite$diabetes_status == "No Diabetes"),
+    sum(analysis_df_pa5$diabetes_status == "No Diabetes"),
+    sum(analysis_df_fpl$diabetes_status == "No Diabetes")
+  ),
+  OR = c(
+    round(exp(coef(sens_primary)[2]), 2),
+    round(exp(coef(sens1)[2]), 2),
+    round(exp(coef(sens2)[2]), 2),
+    round(exp(coef(sens3)[2]), 2),
+    round(exp(coef(sens4)[2]), 2),
+    round(exp(coef(sens5)[3]), 2),  # Low vs High for 3-level
+    round(exp(coef(sens6)[2]), 2)
+  ),
+  CI_lower = c(
+    round(exp(confint(sens_primary)[2,1]), 2),
+    round(exp(confint(sens1)[2,1]), 2),
+    round(exp(confint(sens2)[2,1]), 2),
+    round(exp(confint(sens3)[2,1]), 2),
+    round(exp(confint(sens4)[2,1]), 2),
+    round(exp(confint(sens5)[3,1]), 2),
+    round(exp(confint(sens6)[2,1]), 2)
+  ),
+  CI_upper = c(
+    round(exp(confint(sens_primary)[2,2]), 2),
+    round(exp(confint(sens1)[2,2]), 2),
+    round(exp(confint(sens2)[2,2]), 2),
+    round(exp(confint(sens3)[2,2]), 2),
+    round(exp(confint(sens4)[2,2]), 2),
+    round(exp(confint(sens5)[3,2]), 2),
+    round(exp(confint(sens6)[2,2]), 2)
+  )
+)
+
+sens_results$Cases_Total <- paste0(sens_results$N_Cases, "/",
+                                   sens_results$N_Cases + sens_results$N_Controls)
+sens_results$OR_CI <- paste0(sens_results$OR, " (",
+                             sens_results$CI_lower, ", ",
+                             sens_results$CI_upper, ")")
+
+table5_display <- sens_results %>%
+  select(Analysis, Cases_Total, OR_CI)
+
+print(table5_display)
+
+# Save as flextable
+table5_ft <- flextable(table5_display) %>%
+  set_header_labels(
+    Analysis = "Analysis Specification",
+    Cases_Total = "N Cases/Total",
+    OR_CI = "OR (95% CI)"
+  ) %>%
+  theme_booktabs() %>%
+  autofit() %>%
+  add_header_lines("Table 5. Sensitivity Analyses")
 ```
-
-
